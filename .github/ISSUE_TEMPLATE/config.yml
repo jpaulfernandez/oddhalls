@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Docs
+    url: https://oddhalls.janpaulfernandez.com/docs
+    about: How oddhalls works, step by step.
+  - name: Questions and ideas
+    url: https://github.com/jpaulfernandez/oddhalls/discussions
+    about: Ask a question or talk an idea over before you file it.

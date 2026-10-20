@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in oddhalls does not work.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: oddhalls version
+      description: About oddhalls (the app menu on macOS, Help on Windows and Linux) → Copy diagnostics.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: System
+      description: For example macOS 15.1, Windows 11, Ubuntu 24.04.
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card
+      description: For example Apple M2, NVIDIA RTX 3060.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: What you did, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera model
+      description: Only for a RAW file that does not open or looks wrong.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Help → Copy diagnostics, then paste here. It holds no file paths.
+      render: text

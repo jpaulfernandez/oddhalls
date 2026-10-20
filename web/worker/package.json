@@ -1,0 +1,23 @@
+{
+  "name": "@photobook/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:migrate": "wrangler d1 migrations apply photobook-social --remote $(test -f wrangler.local.toml && echo --config wrangler.local.toml)",
+    "deploy": "wrangler deploy $(test -f wrangler.local.toml && echo --config wrangler.local.toml)",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3",
+    "wrangler": "4.147.0"
+  }
+}

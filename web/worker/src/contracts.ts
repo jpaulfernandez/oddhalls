@@ -115,6 +115,56 @@ export const ActivityResponseSchema = z.object({
 
 export const ACTIVITY_LIMIT = 2000;
 
+/** Plan 72: the most photos one friend can send, and the longest note that goes with them. */
+export const PICKS_MAX = 500;
+export const PICK_NOTE_MAX = 500;
+
+/**
+ * POST `socialRoutes.picks`: a friend's favourites, sent once from one device (*Send my picks*). The first send is
+ * final: the Worker never updates or deletes it (a second send answers 409 with the stored `sentAt`). The ids are the
+ * book's asset ids, kept in the order the friend picked them; the body stays far under the Worker's 64 KB limit.
+ * `cap` (plan 124) is a client preview's, copied from its manifest: more ids than it allows are refused.
+ */
+export const PickRequestSchema = z
+  .object({
+    bookId: z.string().min(1),
+    deviceId: DeviceIdSchema,
+    displayName: DisplayNameSchema,
+    assetIds: z
+      .array(z.string().min(1).max(64))
+      .min(1)
+      .max(PICKS_MAX)
+      .transform((ids) => [...new Set(ids)]),
+    note: z.string().trim().max(PICK_NOTE_MAX).default(''),
+    cap: z.number().int().positive().max(PICKS_MAX).optional(),
+  })
+  .superRefine((request, ctx) => {
+    if (request.cap !== undefined && request.assetIds.length > request.cap) {
+      ctx.addIssue({ code: 'custom', path: ['assetIds'], message: `at most ${request.cap} picks` });
+    }
+  });
+export const PickResponseSchema = z.object({ sentAt: z.iso.datetime({ offset: true }) });
+/** The 409 body of a second send: the time of the first. */
+export const PickAlreadySentSchema = z.object({ error: z.string(), sentAt: z.iso.datetime({ offset: true }) });
+
+/** One friend's picks as the admin endpoint returns them. */
+export const PickSchema = z.object({
+  deviceId: z.string(),
+  displayName: z.string(),
+  assetIds: z.array(z.string()),
+  note: z.string(),
+  sentAt: z.iso.datetime({ offset: true }),
+});
+
+/**
+ * GET `socialRoutes.adminPicks(bookId)` with `Authorization: Bearer <admin token>`: every friend's picks of a book,
+ * oldest send first. There is no public read: a viewer never sees anyone else's picks.
+ */
+export const PicksResponseSchema = z.object({
+  bookId: z.string().min(1),
+  picks: z.array(PickSchema),
+});
+
 export const HealthResponseSchema = z.object({
   ok: z.literal(true),
   version: z.number().int(),
@@ -130,6 +180,10 @@ export type SocialEvent = z.infer<typeof SocialEventSchema>;
 export type SocialLike = z.infer<typeof SocialLikeSchema>;
 export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+export type PickRequest = z.input<typeof PickRequestSchema>;
+export type PickResponse = z.infer<typeof PickResponseSchema>;
+export type FriendPick = z.infer<typeof PickSchema>;
+export type PicksResponse = z.infer<typeof PicksResponseSchema>;
 
 /** Paths on the Worker, relative to its origin (`site.api`). */
 export const socialRoutes = {
@@ -137,7 +191,9 @@ export const socialRoutes = {
   like: '/v1/likes',
   events: '/v1/events',
   likes: (bookId: string): string => `/v1/books/${encodeURIComponent(bookId)}/likes`,
+  picks: '/v1/picks',
   adminActivity: (bookId: string): string => `/v1/admin/books/${encodeURIComponent(bookId)}/activity`,
+  adminPicks: (bookId: string): string => `/v1/admin/books/${encodeURIComponent(bookId)}/picks`,
   preview: (slug: string): string => `/b/${encodeURIComponent(slug)}`,
   feed: '/feed.xml',
 } as const;

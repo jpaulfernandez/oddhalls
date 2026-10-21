@@ -13,6 +13,11 @@ import {
   LikesResponseSchema,
   LikeToggleResponseSchema,
   likeKey,
+  PICK_NOTE_MAX,
+  PICKS_MAX,
+  PickAlreadySentSchema,
+  PickResponseSchema,
+  PicksResponseSchema,
   SOCIAL_API_VERSION,
   socialRoutes,
 } from './contracts.js';
@@ -277,6 +282,86 @@ describe('events and admin activity', () => {
 
   it('exposes the cap the contract promises', () => {
     expect(ACTIVITY_LIMIT).toBeGreaterThan(0);
+  });
+});
+
+describe('friends picks (plan 72)', () => {
+  const book = 'picks-book';
+  const adminPicks = (bookId: string, token: string | null = TOKEN) =>
+    worker.fetch(socialRoutes.adminPicks(bookId), token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+  const send = (bookId: string, deviceId: string, extra: Record<string, unknown> = {}) =>
+    post(socialRoutes.picks, {
+      bookId,
+      deviceId,
+      displayName: 'Mia',
+      assetIds: ['a3', 'a1', 'a2'],
+      note: ' Loved these ',
+      ...extra,
+    });
+
+  it('round trips: 201 with sentAt, then the admin route returns the pick in order', async () => {
+    const res = await send(book, DEVICE_A);
+    expect(res.status).toBe(201);
+    const { sentAt } = PickResponseSchema.parse(await res.json());
+
+    const list = PicksResponseSchema.parse(await (await adminPicks(book)).json());
+    expect(list.bookId).toBe(book);
+    expect(list.picks).toEqual([
+      { deviceId: DEVICE_A, displayName: 'Mia', assetIds: ['a3', 'a1', 'a2'], note: 'Loved these', sentAt },
+    ]);
+  });
+
+  it('requires the admin bearer token on the read, and has no public read', async () => {
+    for (const token of [null, 'wrong', `${TOKEN}x`]) {
+      const res = await adminPicks(book, token);
+      expect(res.status).toBe(401);
+      expect(res.headers.get('www-authenticate')).toBe('Bearer');
+    }
+    expect((await worker.fetch(socialRoutes.picks)).status).toBe(405);
+    expect((await worker.fetch(`/v1/books/${book}/picks`)).status).toBe(404);
+  });
+
+  it('locks a device after its first send: 409 with the first time, the row unchanged', async () => {
+    const first = PicksResponseSchema.parse(await (await adminPicks(book)).json()).picks[0];
+    await new Promise((r) => setTimeout(r, 5));
+    const again = await send(book, DEVICE_A, { displayName: 'Other', assetIds: ['z9'], note: 'changed' });
+    expect(again.status).toBe(409);
+    expect(PickAlreadySentSchema.parse(await again.json()).sentAt).toBe(first?.sentAt);
+    const after = PicksResponseSchema.parse(await (await adminPicks(book)).json());
+    expect(after.picks).toEqual([first]);
+  });
+
+  it('keeps devices and books separate', async () => {
+    expect((await send(book, DEVICE_B, { displayName: 'Tom', assetIds: ['a1'] })).status).toBe(201);
+    expect((await send('other-picks-book', DEVICE_A)).status).toBe(201);
+    const list = PicksResponseSchema.parse(await (await adminPicks(book)).json());
+    expect(list.picks.map((p) => p.displayName)).toEqual(['Mia', 'Tom']);
+    const other = PicksResponseSchema.parse(await (await adminPicks('other-picks-book')).json());
+    expect(other.picks).toHaveLength(1);
+    const none = PicksResponseSchema.parse(await (await adminPicks('no-picks-book')).json());
+    expect(none.picks).toEqual([]);
+  });
+
+  it('validates: bad JSON, no name, no ids, over 500 ids, a long note, an oversized body', async () => {
+    const vbook = 'picks-validation';
+    expect((await post(socialRoutes.picks, '{nope')).status).toBe(400);
+    expect((await send(vbook, DEVICE_A, { displayName: '' })).status).toBe(400);
+    expect((await send(vbook, DEVICE_A, { assetIds: [] })).status).toBe(400);
+    const tooMany = Array.from({ length: PICKS_MAX + 1 }, (_, i) => `asset-${i}`);
+    expect((await send(vbook, DEVICE_A, { assetIds: tooMany })).status).toBe(400);
+    expect((await send(vbook, DEVICE_A, { note: 'x'.repeat(PICK_NOTE_MAX + 1) })).status).toBe(400);
+    expect((await post(socialRoutes.picks, JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))).status).toBe(413);
+    // None of the rejected sends locked the device.
+    expect((await send(vbook, DEVICE_A)).status).toBe(201);
+    const preflight = await worker.fetch(socialRoutes.picks, { method: 'OPTIONS' });
+    expect(preflight.status).toBe(204);
+  });
+
+  it('plan 124: refuses more ids than a client preview cap, without locking the device', async () => {
+    const cbook = 'picks-cap';
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `asset-${i}`);
+    expect((await send(cbook, DEVICE_A, { assetIds: ids(21), cap: 20 })).status).toBe(400);
+    expect((await send(cbook, DEVICE_A, { assetIds: ids(20), cap: 20 })).status).toBe(201);
   });
 });
 

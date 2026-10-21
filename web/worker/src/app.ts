@@ -8,6 +8,9 @@ import {
   LikeToggleRequestSchema,
   type LikeToggleResponse,
   likeKey,
+  PickRequestSchema,
+  type PickResponse,
+  type PicksResponse,
   SOCIAL_API_VERSION,
   type SocialEvent,
   type SocialLike,
@@ -31,6 +34,7 @@ export interface Env {
 
 const BOOK_LIKES = /^\/v1\/books\/([^/]+)\/likes$/;
 const BOOK_ACTIVITY = /^\/v1\/admin\/books\/([^/]+)\/activity$/;
+const BOOK_PICKS = /^\/v1\/admin\/books\/([^/]+)\/picks$/;
 const PREVIEW = /^\/b\/([^/]+)$/;
 
 function bookIdFrom(match: RegExpMatchArray): string | null {
@@ -97,6 +101,20 @@ export async function handle(request: Request, env: Env): Promise<Response> {
       const bookId = bookIdFrom(activity);
       if (!bookId) return errorResponse(400, 'invalid book id');
       return await getActivity(bookId, env);
+    }
+    if (pathname === socialRoutes.picks) {
+      if (method !== 'POST') return methodNotAllowed('POST');
+      return await sendPick(request, env);
+    }
+    const picks = BOOK_PICKS.exec(pathname);
+    if (picks) {
+      if (method !== 'GET') return methodNotAllowed('GET');
+      if (!(await isAdmin(request, env))) {
+        return errorResponse(401, 'unauthorized', { 'WWW-Authenticate': 'Bearer' });
+      }
+      const bookId = bookIdFrom(picks);
+      if (!bookId) return errorResponse(400, 'invalid book id');
+      return await getPicks(bookId, env);
     }
     return errorResponse(404, 'not found');
   } catch (error) {
@@ -258,6 +276,64 @@ async function getActivity(bookId: string, env: Env): Promise<Response> {
     truncated: eventRows.length > ACTIVITY_LIMIT,
   };
   return json(response);
+}
+
+/**
+ * A friend's picks (plan 72). The first send of a device is final: the insert does nothing when the row exists, the row
+ * is read back, and a second send answers 409 with the stored time. Nothing here updates or deletes a pick.
+ */
+async function sendPick(request: Request, env: Env): Promise<Response> {
+  const body = await readJson(request);
+  if (!body.ok) return body.response;
+  const parsed = PickRequestSchema.safeParse(body.value);
+  if (!parsed.success) return errorResponse(400, issueText(parsed.error));
+  const { bookId, deviceId, displayName, assetIds, note } = parsed.data;
+
+  const sentAt = new Date().toISOString();
+  const [written, stored] = await env.DB.batch<{ sent_at: string }>([
+    env.DB.prepare(
+      `INSERT INTO picks (book_id, device_id, display_name, asset_ids, note, sent_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (book_id, device_id) DO NOTHING`,
+    ).bind(bookId, deviceId, displayName, JSON.stringify(assetIds), note, sentAt),
+    env.DB.prepare('SELECT sent_at FROM picks WHERE book_id = ?1 AND device_id = ?2').bind(bookId, deviceId),
+  ]);
+  const first = (written?.meta.changes ?? 0) > 0;
+  const storedAt = stored?.results[0]?.sent_at ?? sentAt;
+  if (first) {
+    const response: PickResponse = { sentAt: storedAt };
+    return json(response, 201);
+  }
+  return json({ error: 'already sent', sentAt: storedAt }, 409);
+}
+
+async function getPicks(bookId: string, env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    `SELECT device_id, display_name, asset_ids, note, sent_at FROM picks
+     WHERE book_id = ?1 ORDER BY sent_at, device_id`,
+  )
+    .bind(bookId)
+    .all<{ device_id: string; display_name: string; asset_ids: string; note: string; sent_at: string }>();
+  const response: PicksResponse = {
+    bookId,
+    picks: rows.results.map((row) => ({
+      deviceId: row.device_id,
+      displayName: row.display_name,
+      assetIds: parseIds(row.asset_ids),
+      note: row.note,
+      sentAt: row.sent_at,
+    })),
+  };
+  return json(response);
+}
+
+function parseIds(text: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 async function getPreview(slug: string, url: URL, books: R2Bucket): Promise<Response> {

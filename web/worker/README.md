@@ -12,6 +12,10 @@ It is optional: without it the viewer hides likes and logs nothing, and share li
 - `POST /v1/likes`, `GET /v1/books/:bookId/likes?device=<id>`
 - `POST /v1/events`
 - `GET /v1/admin/books/:bookId/activity` with `Authorization: Bearer <ADMIN_TOKEN>`
+- `POST /v1/picks` — a friend's picks (`bookId`, `deviceId`, `displayName`, `assetIds` 1 to 500, `note` up to 500 characters). One per device per book and final: 201 `{ sentAt }`, then 409 `{ error, sentAt }` with the first time; a row is never updated or deleted
+- `GET /v1/admin/books/:bookId/picks` with `Authorization: Bearer <ADMIN_TOKEN>` — every friend's picks of a book, oldest send first (there is no public read)
+
+`migrations/0002_picks.sql` adds the `picks` table: rerun `pnpm run db:migrate` (remote) after updating, then redeploy.
 
 CORS is open (`*`): the viewer can run on any origin and only the admin route needs the token.
 
